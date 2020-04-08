@@ -196,6 +196,7 @@ func (c *Crawler) transport() http.RoundTripper {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DialContext:           proxyDialContext,
+		ForceAttemptHTTP2:     true,
 	}
 
 	var stack HttpMessageHandler = HttpMessageHandlerFunc(func(req *http.Request) (*http.Response, error) {
