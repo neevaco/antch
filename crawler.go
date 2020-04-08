@@ -47,6 +47,9 @@ type Crawler struct {
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
 
+	// ForceAttemptHTTP2 specifies the corresponding field in the underlying HTTP transport.
+	ForceAttemptHTTP2 bool
+
 	// ErrorLog specifies an optional logger for errors HTTP transports
 	// and unexpected behavior from handlers.
 	// If nil, logging goes to os.Stderr via the log package's
@@ -196,6 +199,7 @@ func (c *Crawler) transport() http.RoundTripper {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DialContext:           proxyDialContext,
+		ForceAttemptHTTP2:     c.ForceAttemptHTTP2,
 	}
 
 	var stack HttpMessageHandler = HttpMessageHandlerFunc(func(req *http.Request) (*http.Response, error) {

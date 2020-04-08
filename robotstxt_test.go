@@ -31,7 +31,7 @@ func TestRobotstxtHandler(t *testing.T) {
 	}{
 		{"/", "", true},
 		{"/shopping/", "", true},
-		{"account", "", false},
+		{"/account/", "", false},
 		{"/", "Twitterbot", false},
 	}
 
