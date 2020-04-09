@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/net/proxy"
 )
@@ -34,7 +35,12 @@ func proxyHandler(f func(*http.Request) (*url.URL, error), next HttpMessageHandl
 	})
 }
 
-var zeroDialer net.Dialer
+// Defaults are from http.DefaultTransport
+var zeroDialer = net.Dialer{
+	Timeout:   30 * time.Second,
+	KeepAlive: 30 * time.Second,
+	DualStack: true,
+}
 
 func proxyDialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if v := ctx.Value(ProxyKey{}); v != nil {

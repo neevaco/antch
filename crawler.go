@@ -3,6 +3,8 @@ package antch
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -534,6 +536,7 @@ func closeRequest(r *http.Request) {
 
 func closeResponse(r *http.Response) {
 	if r != nil && r.Body != nil {
+		io.Copy(ioutil.Discard, r.Body)
 		r.Body.Close()
 	}
 }
