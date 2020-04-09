@@ -322,7 +322,6 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 		case req := <-reqch:
 			resc := make(chan responseAndError)
 			spider := c.getSpider(req.URL)
-
 			if req.Header.Get("User-Agent") == "" && c.UserAgent != "" {
 				req.Header.Set("User-Agent", c.UserAgent)
 			}

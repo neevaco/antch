@@ -24,7 +24,8 @@ func (e *robotsEntry) update(proxyURL *url.URL) {
 		return &robotstxt.RobotsData{}
 	}
 	ts := &http.Transport{
-		DialContext: proxyDialContext,
+		DialContext:       proxyDialContext,
+		ForceAttemptHTTP2: true,
 	}
 	client := &http.Client{
 		Transport: ts,
