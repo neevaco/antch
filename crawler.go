@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -330,34 +329,21 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 			spider.reqch <- requestAndChan{req: req, ch: resc}
 			select {
 			case re := <-resc:
+				closeRequest(req)
 				if re.err != nil {
 					c.logf("crawler: send HTTP request got error: %v", re.err)
 				} else {
-					go func(clonedReq *http.Request, res *http.Response) {
+					go func(res *http.Response) {
 						defer closeResponse(res)
 						defer func() {
 							if r := recover(); r != nil {
 								c.logf("crawler: Handler got panic error: %v", r)
 							}
 						}()
-						if res.StatusCode == http.StatusTooManyRequests {
-							timeSleep := 10
-							for _, val := range res.Header[http.CanonicalHeaderKey("Retry-After")] {
-								if timeSleepHeader, err := strconv.Atoi(val); err == nil && timeSleepHeader < timeSleep {
-									timeSleep = timeSleepHeader
-								}
-								break
-							}
-							time.Sleep(time.Second * time.Duration(timeSleep))
-							c.Crawl(clonedReq)
-							return
-						}
-						closeRequest(clonedReq)
 						h, _ := c.Handler(res)
 						h.ServeSpider(c.writeCh, res)
-					}(req.Clone(req.Context()), re.res)
+					}(re.res)
 				}
-				closeRequest(req)
 			case <-closeCh:
 				closeRequest(req)
 				return
