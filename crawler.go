@@ -340,10 +340,12 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								c.logf("crawler: Handler got panic error: %v", r)
 							}
 						}()
+						// TODO(vivek): Don't want to retry forever. How should I escape out?
+						// TODO(vivek): Should I respect Retry-After perfectly?
 						if res.StatusCode == http.StatusTooManyRequests {
 							timeSleep := 10
 							for _, val := range res.Header[http.CanonicalHeaderKey("Retry-After")] {
-								if timeSleepHeader, err := strconv.Atoi(val); err == nil && timeSleepHeader < timeSleep {
+								if timeSleepHeader, err := strconv.Atoi(val); err == nil && timeSleepHeader > 0 && timeSleepHeader < timeSleep {
 									timeSleep = timeSleepHeader
 								}
 								break
