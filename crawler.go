@@ -370,8 +370,11 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 						}()
 
 						var recrawl bool
-						if len(c.RetryHTTPResponseCodes) > 0 && c.urlNumRetries != nil {
+						if len(c.RetryHTTPResponseCodes) > 0 {
 							c.urlNumRetriesMu.Lock()
+							if c.urlNumRetries == nil {
+								c.urlNumRetries = make(map[string]int)
+							}
 							for _, v := range c.RetryHTTPResponseCodes {
 								if res.StatusCode != v {
 									continue
