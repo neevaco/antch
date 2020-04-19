@@ -393,11 +393,12 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader) < timeSleep {
 								timeSleep = time.Duration(timeSleepHeader)
 							}
+							c.logf("crawler: sleeping for %v before retrying for %v", timeSleep, url)
 							select {
 							case <-clonedReq.Context().Done():
 								c.logf("crawler: aborted because context done")
 							case <-time.After(timeSleep):
-								c.logf("crawler: retrying for %v", url)
+								c.logf("crawler: retrying for %v after sleeping for %v", url, timeSleep)
 								c.Crawl(clonedReq)
 							}
 							return
