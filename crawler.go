@@ -370,17 +370,17 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 							}
 						}()
 
-						var recrawl, retryResponseCode bool
-						url := clonedReq.URL.String()
+						var retryResponseCode bool
 						if len(c.RetryHTTPResponseCodes) > 0 {
 							for _, v := range c.RetryHTTPResponseCodes {
-								if res.StatusCode != v {
-									continue
+								if res.StatusCode == v {
+									retryResponseCode = true
+									break
 								}
-								retryResponseCode = true
-								break
 							}
 						}
+						url := clonedReq.URL.String()
+						var recrawl bool
 						c.urlNumRetriesMu.Lock()
 						if c.urlNumRetries == nil {
 							c.urlNumRetries = make(map[string]int)
@@ -399,7 +399,7 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 
 						if recrawl {
 							timeSleep := c.secondsBetweenRetries()
-							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && timeSleepHeader < timeSleep {
+							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 {
 								timeSleep = timeSleepHeader
 							}
 							select {
@@ -410,10 +410,6 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								c.Crawl(clonedReq)
 							}
 							return
-						} else {
-							c.urlNumRetriesMu.Lock()
-
-							c.urlNumRetriesMu.Unlock()
 						}
 
 						closeRequest(clonedReq)
