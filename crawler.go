@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,9 +55,9 @@ type Crawler struct {
 	// RetryHTTPResponseCodes specifies the response codes for which we'll retry for a particular URL.
 	RetryHTTPResponseCodes []int
 
-	// Time between retries.
-	// Default is 10s.
-	TimeBetweenRetries time.Duration
+	// Time in seconds between retries.
+	// Default is 10.
+	SecondsBetweenRetries int
 
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
@@ -315,11 +316,11 @@ func (c *Crawler) requestTimeout() time.Duration {
 	return 30 * time.Second
 }
 
-func (c *Crawler) timeBetweenRetries() time.Duration {
-	if v := c.TimeBetweenRetries; v > 0 {
+func (c *Crawler) secondsBetweenRetries() int {
+	if v := c.SecondsBetweenRetries; v > 0 {
 		return v
 	}
-	return 10 * time.Second
+	return 10
 }
 
 func (c *Crawler) maxRetries() int {
@@ -397,14 +398,15 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 						c.urlNumRetriesMu.Unlock()
 
 						if recrawl {
-							timeSleep := c.timeBetweenRetries()
-							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader)*time.Second < timeSleep {
-								timeSleep = time.Duration(timeSleepHeader) * time.Second
+							timeSleep := c.secondsBetweenRetries()
+							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && timeSleepHeader < timeSleep {
+								timeSleep = timeSleepHeader
 							}
 							select {
 							case <-clonedReq.Context().Done():
 								c.logf("crawler: aborted because context done")
-							case <-time.After(timeSleep):
+							case <-time.After(time.Second * time.Duration(rand.Intn(1+2*timeSleep))):
+								// Randomize the sleeps to spread out retries.
 								c.Crawl(clonedReq)
 							}
 							return
