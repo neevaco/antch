@@ -47,6 +47,17 @@ type Crawler struct {
 	// Default is 32.
 	MaxConcurrentItems int
 
+	// MaxNumRetries specifies the maximum number of retries we'll make for a particular URL.
+	// Default is 0 (excluding the original attempt)
+	MaxRetries int
+
+	// RetryHTTPResponseCodes specifies the response codes for which we'll retry for a particular URL.
+	RetryHTTPResponseCodes []int
+
+	// Time between retries.
+	// Default is 10s.
+	TimeBetweenRetries time.Duration
+
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
 
@@ -70,6 +81,9 @@ type Crawler struct {
 
 	spider   map[string]*spider
 	spiderMu sync.Mutex
+
+	urlNumRetries   map[string]int // GUARDED_BY(urlNumRetriesMu)
+	urlNumRetriesMu sync.Mutex
 
 	once sync.Once
 	mu   sync.RWMutex
@@ -301,6 +315,20 @@ func (c *Crawler) requestTimeout() time.Duration {
 	return 30 * time.Second
 }
 
+func (c *Crawler) timeBetweenRetries() time.Duration {
+	if v := c.TimeBetweenRetries; v > 0 {
+		return v
+	}
+	return 10 * time.Second
+}
+
+func (c *Crawler) maxRetries() int {
+	if v := c.MaxRetries; v > 0 {
+		return v
+	}
+	return 0
+}
+
 func (c *Crawler) init() {
 	c.client = &http.Client{
 		Transport:     c.transport(),
@@ -340,17 +368,35 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								c.logf("crawler: Handler got panic error: %v", r)
 							}
 						}()
-						// TODO(vivek): Don't want to retry forever. How should I escape out?
-						// TODO(vivek): Should I respect Retry-After perfectly?
-						if res.StatusCode == http.StatusTooManyRequests {
-							timeSleep := 10
-							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && timeSleepHeader < timeSleep {
-								timeSleep = timeSleepHeader
+						var recrawl bool
+						if len(c.RetryHTTPResponseCodes) > 0 {
+							c.urlNumRetriesMu.Lock()
+							for _, v := range c.RetryHTTPResponseCodes {
+								if res.StatusCode != v {
+									continue
+								}
+								if c.urlNumRetries != nil {
+									url := clonedReq.URL.String()
+									if val, _ := c.urlNumRetries[url]; val < c.maxRetries() {
+										c.urlNumRetries[url]++
+										recrawl = true
+										break
+									}
+								}
 							}
-							time.Sleep(time.Second * time.Duration(timeSleep))
+							c.urlNumRetriesMu.Unlock()
+						}
+
+						if recrawl {
+							timeSleep := c.timeBetweenRetries()
+							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader) < timeSleep {
+								timeSleep = time.Duration(timeSleepHeader)
+							}
+							time.Sleep(timeSleep)
 							c.Crawl(clonedReq)
 							return
 						}
+
 						closeRequest(clonedReq)
 						h, _ := c.Handler(res)
 						h.ServeSpider(c.writeCh, res)
