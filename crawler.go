@@ -369,29 +369,37 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 							}
 						}()
 
-						var recrawl bool
+						var recrawl, retryResponseCode bool
 						url := clonedReq.URL.String()
 						if len(c.RetryHTTPResponseCodes) > 0 {
-							c.urlNumRetriesMu.Lock()
-							if c.urlNumRetries == nil {
-								c.urlNumRetries = make(map[string]int)
-							}
 							for _, v := range c.RetryHTTPResponseCodes {
 								if res.StatusCode != v {
 									continue
 								}
-								if val, _ := c.urlNumRetries[url]; val < c.maxRetries() {
-									c.urlNumRetries[url]++
-									recrawl = true
-									break
-								}
+								retryResponseCode = true
+								break
 							}
-							c.urlNumRetriesMu.Unlock()
 						}
+						c.urlNumRetriesMu.Lock()
+						if c.urlNumRetries == nil {
+							c.urlNumRetries = make(map[string]int)
+						}
+						if retryResponseCode {
+							val, _ := c.urlNumRetries[url]
+							if val < c.maxRetries() {
+								c.urlNumRetries[url]++
+								recrawl = true
+							}
+						} else {
+							// Finally, we succeeded! Reset the retry count.
+							c.urlNumRetries[url] = 0
+						}
+						c.urlNumRetriesMu.Unlock()
+
 						if recrawl {
 							timeSleep := c.timeBetweenRetries()
-							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader) < timeSleep {
-								timeSleep = time.Duration(timeSleepHeader)
+							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader)*time.Second < timeSleep {
+								timeSleep = time.Duration(timeSleepHeader) * time.Second
 							}
 							select {
 							case <-clonedReq.Context().Done():
@@ -400,6 +408,10 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								c.Crawl(clonedReq)
 							}
 							return
+						} else {
+							c.urlNumRetriesMu.Lock()
+
+							c.urlNumRetriesMu.Unlock()
 						}
 
 						closeRequest(clonedReq)
