@@ -370,6 +370,7 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 						}()
 
 						var recrawl bool
+						url := clonedReq.URL.String()
 						if len(c.RetryHTTPResponseCodes) > 0 {
 							c.urlNumRetriesMu.Lock()
 							if c.urlNumRetries == nil {
@@ -379,7 +380,6 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								if res.StatusCode != v {
 									continue
 								}
-								url := clonedReq.URL.String()
 								if val, _ := c.urlNumRetries[url]; val < c.maxRetries() {
 									c.urlNumRetries[url]++
 									recrawl = true
@@ -397,6 +397,7 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 							case <-clonedReq.Context().Done():
 								c.logf("crawler: aborted because context done")
 							case <-time.After(timeSleep):
+								c.logf("crawler: retrying for %v", url)
 								c.Crawl(clonedReq)
 							}
 							return
