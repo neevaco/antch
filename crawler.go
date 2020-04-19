@@ -368,32 +368,34 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 								c.logf("crawler: Handler got panic error: %v", r)
 							}
 						}()
+
 						var recrawl bool
-						if len(c.RetryHTTPResponseCodes) > 0 {
+						if len(c.RetryHTTPResponseCodes) > 0 && c.urlNumRetries != nil {
 							c.urlNumRetriesMu.Lock()
 							for _, v := range c.RetryHTTPResponseCodes {
 								if res.StatusCode != v {
 									continue
 								}
-								if c.urlNumRetries != nil {
-									url := clonedReq.URL.String()
-									if val, _ := c.urlNumRetries[url]; val < c.maxRetries() {
-										c.urlNumRetries[url]++
-										recrawl = true
-										break
-									}
+								url := clonedReq.URL.String()
+								if val, _ := c.urlNumRetries[url]; val < c.maxRetries() {
+									c.urlNumRetries[url]++
+									recrawl = true
+									break
 								}
 							}
 							c.urlNumRetriesMu.Unlock()
 						}
-
 						if recrawl {
 							timeSleep := c.timeBetweenRetries()
 							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 && time.Duration(timeSleepHeader) < timeSleep {
 								timeSleep = time.Duration(timeSleepHeader)
 							}
-							time.Sleep(timeSleep)
-							c.Crawl(clonedReq)
+							select {
+							case <-clonedReq.Context().Done():
+								c.logf("crawler: aborted because context done")
+							case <-time.After(timeSleep):
+								c.Crawl(clonedReq)
+							}
 							return
 						}
 
