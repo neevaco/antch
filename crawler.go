@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,16 +47,16 @@ type Crawler struct {
 	// Default is 32.
 	MaxConcurrentItems int
 
-	// MaxNumRetries specifies the maximum number of retries we'll make for a particular URL.
+	// MaxRetries specifies the maximum number of retries we'll make for a particular URL.
 	// Default is 0 (excluding the original attempt)
 	MaxRetries int
 
 	// RetryHTTPResponseCodes specifies the response codes for which we'll retry for a particular URL.
 	RetryHTTPResponseCodes []int
 
-	// Time in seconds between retries.
-	// Default is 10.
-	SecondsBetweenRetries int
+	// Default duration between retries. If the response headers have a Retry-After, we'll respect that instead.
+	// Default is 10s.
+	DefaultRetryPeriod time.Duration
 
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
@@ -316,18 +315,11 @@ func (c *Crawler) requestTimeout() time.Duration {
 	return 30 * time.Second
 }
 
-func (c *Crawler) secondsBetweenRetries() int {
-	if v := c.SecondsBetweenRetries; v > 0 {
+func (c *Crawler) defaultRetryPeriod() time.Duration {
+	if v := c.DefaultRetryPeriod; v > 0 {
 		return v
 	}
-	return 10
-}
-
-func (c *Crawler) maxRetries() int {
-	if v := c.MaxRetries; v > 0 {
-		return v
-	}
-	return 0
+	return 10 * time.Second
 }
 
 func (c *Crawler) init() {
@@ -342,6 +334,18 @@ func (c *Crawler) init() {
 	c.writeCh = make(chan Item)
 	go c.readLoop()
 	go c.writeLoop()
+}
+
+func shouldRetry(retryHTTPResponseCodes []int, res *http.Response) bool {
+	if len(retryHTTPResponseCodes) == 0 {
+		return false
+	}
+	for _, v := range retryHTTPResponseCodes {
+		if res.StatusCode == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan int) {
@@ -370,15 +374,7 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 							}
 						}()
 
-						var retryResponseCode bool
-						if len(c.RetryHTTPResponseCodes) > 0 {
-							for _, v := range c.RetryHTTPResponseCodes {
-								if res.StatusCode == v {
-									retryResponseCode = true
-									break
-								}
-							}
-						}
+						retryResponseCode := shouldRetry(c.RetryHTTPResponseCodes, res)
 						url := clonedReq.URL.String()
 						var recrawl bool
 						c.urlNumRetriesMu.Lock()
@@ -387,25 +383,25 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 						}
 						if retryResponseCode {
 							val, _ := c.urlNumRetries[url]
-							if val < c.maxRetries() {
+							if val < c.MaxRetries {
 								c.urlNumRetries[url]++
 								recrawl = true
 							}
 						} else {
-							// Finally, we succeeded! Reset the retry count.
-							c.urlNumRetries[url] = 0
+							// Finally, we succeeded! Delete the key from urlNumRetries (to avoid the map from growing indefinitely).
+							delete(c.urlNumRetries, url)
 						}
 						c.urlNumRetriesMu.Unlock()
 
 						if recrawl {
-							timeSleep := c.secondsBetweenRetries()
+							timeSleep := c.defaultRetryPeriod()
 							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 {
-								timeSleep = timeSleepHeader
+								timeSleep = time.Duration(timeSleepHeader) * time.Second
 							}
 							select {
 							case <-clonedReq.Context().Done():
 								c.logf("crawler: aborted because context done")
-							case <-time.After(time.Second * time.Duration(rand.Intn(1+2*timeSleep))):
+							case <-time.After(timeSleep):
 								// Randomize the sleeps to spread out retries.
 								c.Crawl(clonedReq)
 							}
