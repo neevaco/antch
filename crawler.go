@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,17 @@ type Crawler struct {
 	// Default is 32.
 	MaxConcurrentItems int
 
+	// MaxRetries specifies the maximum number of retries we'll make for a particular URL.
+	// Default is 0 (excluding the original attempt)
+	MaxRetries int
+
+	// RetryHTTPResponseCodes specifies the response codes for which we'll retry for a particular URL.
+	RetryHTTPResponseCodes []int
+
+	// Default duration between retries. If the response headers have a Retry-After, we'll respect that instead.
+	// Default is 10s.
+	DefaultRetryPeriod time.Duration
+
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
 
@@ -69,6 +81,9 @@ type Crawler struct {
 
 	spider   map[string]*spider
 	spiderMu sync.Mutex
+
+	urlNumRetries   map[string]int // GUARDED_BY(urlNumRetriesMu)
+	urlNumRetriesMu sync.Mutex
 
 	once sync.Once
 	mu   sync.RWMutex
@@ -300,6 +315,13 @@ func (c *Crawler) requestTimeout() time.Duration {
 	return 30 * time.Second
 }
 
+func (c *Crawler) defaultRetryPeriod() time.Duration {
+	if v := c.DefaultRetryPeriod; v > 0 {
+		return v
+	}
+	return 10 * time.Second
+}
+
 func (c *Crawler) init() {
 	c.client = &http.Client{
 		Transport:     c.transport(),
@@ -312,6 +334,18 @@ func (c *Crawler) init() {
 	c.writeCh = make(chan Item)
 	go c.readLoop()
 	go c.writeLoop()
+}
+
+func shouldRetry(retryHTTPResponseCodes []int, res *http.Response) bool {
+	if len(retryHTTPResponseCodes) == 0 {
+		return false
+	}
+	for _, v := range retryHTTPResponseCodes {
+		if res.StatusCode == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan int) {
@@ -329,21 +363,57 @@ func (c *Crawler) scanRequestWork(workCh chan chan *http.Request, closeCh chan i
 			spider.reqch <- requestAndChan{req: req, ch: resc}
 			select {
 			case re := <-resc:
-				closeRequest(req)
 				if re.err != nil {
 					c.logf("crawler: send HTTP request got error: %v", re.err)
 				} else {
-					go func(res *http.Response) {
+					go func(clonedReq *http.Request, res *http.Response) {
 						defer closeResponse(res)
 						defer func() {
 							if r := recover(); r != nil {
 								c.logf("crawler: Handler got panic error: %v", r)
 							}
 						}()
+
+						retryResponseCode := shouldRetry(c.RetryHTTPResponseCodes, res)
+						url := clonedReq.URL.String()
+						var recrawl bool
+						c.urlNumRetriesMu.Lock()
+						if c.urlNumRetries == nil {
+							c.urlNumRetries = make(map[string]int)
+						}
+						if retryResponseCode {
+							val, _ := c.urlNumRetries[url]
+							if val < c.MaxRetries {
+								c.urlNumRetries[url]++
+								recrawl = true
+							}
+						} else {
+							// Finally, we succeeded! Delete the key from urlNumRetries (to avoid the map from growing indefinitely).
+							delete(c.urlNumRetries, url)
+						}
+						c.urlNumRetriesMu.Unlock()
+
+						if recrawl {
+							timeSleep := c.defaultRetryPeriod()
+							if timeSleepHeader, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && timeSleepHeader > 0 {
+								timeSleep = time.Duration(timeSleepHeader) * time.Second
+							}
+							select {
+							case <-clonedReq.Context().Done():
+								c.logf("crawler: aborted because context done")
+							case <-time.After(timeSleep):
+								// Randomize the sleeps to spread out retries.
+								c.Crawl(clonedReq)
+							}
+							return
+						}
+
+						closeRequest(clonedReq)
 						h, _ := c.Handler(res)
 						h.ServeSpider(c.writeCh, res)
-					}(re.res)
+					}(req.Clone(req.Context()), re.res)
 				}
+				closeRequest(req)
 			case <-closeCh:
 				closeRequest(req)
 				return
