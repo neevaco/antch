@@ -33,7 +33,11 @@ func (e *robotsEntry) update(proxyURL *url.URL) {
 			return http.ErrUseLastResponse
 		},
 	}
-	req, _ := http.NewRequest("GET", e.url, nil)
+	req, err := http.NewRequest("GET", e.url, nil)
+	if err != nil {
+		e.data = allAllowed()
+		return
+	}
 	if proxyURL != nil {
 		req = req.WithContext(context.WithValue(req.Context(), ProxyKey{}, proxyURL))
 	}
