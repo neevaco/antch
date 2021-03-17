@@ -58,6 +58,11 @@ type Crawler struct {
 	// Default is 10s.
 	DefaultRetryPeriod time.Duration
 
+	// Transport specifies the mechanism by which HTTP requests are made. Note that if populated, then this field would
+	// take precedence over other configs that determine the transport configuration e.g.: MaxConcurrentRequestsPerSite.
+	// If nil, then a default value is used.
+	Transport http.RoundTripper
+
 	// UserAgent specifies the user-agent for the remote server.
 	UserAgent string
 
@@ -206,14 +211,19 @@ func (c *Crawler) logf(format string, args ...interface{}) {
 }
 
 func (c *Crawler) transport() http.RoundTripper {
-	ts := &http.Transport{
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   c.maxConcurrentRequestsPerSite() * 2,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DialContext:           proxyDialContext,
-		ForceAttemptHTTP2:     true,
+	var ts http.RoundTripper
+	if c.Transport != nil {
+		ts = c.Transport
+	} else {
+		ts = &http.Transport{
+			MaxIdleConns:          1000,
+			MaxIdleConnsPerHost:   c.maxConcurrentRequestsPerSite() * 2,
+			IdleConnTimeout:       120 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DialContext:           proxyDialContext,
+			ForceAttemptHTTP2:     true,
+		}
 	}
 
 	var stack HttpMessageHandler = HttpMessageHandlerFunc(func(req *http.Request) (*http.Response, error) {
